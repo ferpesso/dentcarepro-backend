@@ -1,0 +1,443 @@
+import { int, mysqlEnum, mysqlTable, text, timestamp, varchar, boolean, decimal, json, date } from "drizzle-orm/mysql-core";
+import { relations } from "drizzle-orm";
+
+/**
+ * DentCarePro SaaS - Schema Completo de Base de Dados
+ * 
+ * Sistema de gestão para clínicas dentárias com:
+ * - Multi-tenancy (isolamento por clínica)
+ * - Sistema SaaS com planos e assinaturas
+ * - Gestão completa de utentes, consultas e faturação
+ * - Terminologia em Português de Portugal
+ */
+
+// ============================================
+// AUTENTICAÇÃO E UTILIZADORES
+// ============================================
+
+export const users = mysqlTable("users", {
+  id: int("id").autoincrement().primaryKey(),
+  openId: varchar("openId", { length: 64 }).notNull().unique(),
+  nome: text("nome"),
+  email: varchar("email", { length: 320 }),
+  loginMethod: varchar("loginMethod", { length: 64 }),
+  role: mysqlEnum("role", ["user", "admin", "dentista", "rececionista"]).default("user").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+  lastSignedIn: timestamp("lastSignedIn").defaultNow().notNull(),
+});
+
+export type User = typeof users.$inferSelect;
+export type InsertUser = typeof users.$inferInsert;
+
+// ============================================
+// SISTEMA SAAS - PLANOS E ASSINATURAS
+// ============================================
+
+export const planosAssinatura = mysqlTable("planos_assinatura", {
+  id: int("id").autoincrement().primaryKey(),
+  nome: varchar("nome", { length: 100 }).notNull(),
+  slug: varchar("slug", { length: 50 }).notNull().unique(),
+  descricao: text("descricao"),
+  precoMensal: decimal("precoMensal", { precision: 10, scale: 2 }).notNull(),
+  precoAnual: decimal("precoAnual", { precision: 10, scale: 2 }),
+  maxDentistas: int("maxDentistas").notNull().default(1),
+  maxUtentes: int("maxUtentes").notNull().default(100),
+  maxClinicas: int("maxClinicas").notNull().default(1),
+  maxArmazenamentoGB: int("maxArmazenamentoGB").notNull().default(1),
+  funcionalidades: json("funcionalidades").$type<{
+    multiClinica: boolean;
+    mensagensIA: boolean;
+    relatoriosAvancados: boolean;
+    acessoAPI: boolean;
+    suportePrioritario: boolean;
+    marcaPersonalizada: boolean;
+    integracaoWhatsapp: boolean;
+    notificacoesSMS: boolean;
+  }>(),
+  ativo: boolean("ativo").notNull().default(true),
+  popular: boolean("popular").notNull().default(false),
+  stripePriceIdMensal: varchar("stripePriceIdMensal", { length: 255 }),
+  stripePriceIdAnual: varchar("stripePriceIdAnual", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const registosClinica = mysqlTable("registos_clinica", {
+  id: int("id").autoincrement().primaryKey(),
+  nomeClinica: varchar("nomeClinica", { length: 255 }).notNull(),
+  nomeProprietario: varchar("nomeProprietario", { length: 255 }).notNull(),
+  emailProprietario: varchar("emailProprietario", { length: 320 }).notNull().unique(),
+  telemovel: varchar("telemovel", { length: 50 }),
+  morada: text("morada"),
+  cidade: varchar("cidade", { length: 100 }),
+  codigoPostal: varchar("codigoPostal", { length: 20 }),
+  pais: varchar("pais", { length: 2 }).notNull().default("PT"),
+  planoSelecionadoId: int("planoSelecionadoId").references(() => planosAssinatura.id),
+  estado: mysqlEnum("estado", ["pendente", "completo", "cancelado"]).notNull().default("pendente"),
+  tokenVerificacao: varchar("tokenVerificacao", { length: 255 }),
+  verificadoEm: timestamp("verificadoEm"),
+  clinicaId: int("clinicaId"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  completadoEm: timestamp("completadoEm"),
+});
+
+// ============================================
+// CLÍNICAS
+// ============================================
+
+export const clinicas = mysqlTable("clinicas", {
+  id: int("id").autoincrement().primaryKey(),
+  nome: varchar("nome", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  telemovel: varchar("telemovel", { length: 50 }),
+  morada: text("morada"),
+  cidade: varchar("cidade", { length: 100 }),
+  codigoPostal: varchar("codigoPostal", { length: 20 }),
+  pais: varchar("pais", { length: 2 }).notNull().default("PT"),
+  nif: varchar("nif", { length: 50 }),
+  logoUrl: varchar("logoUrl", { length: 500 }),
+  ativo: boolean("ativo").notNull().default(true),
+  proprietarioId: int("proprietarioId").notNull().references(() => users.id),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const assinaturasClinica = mysqlTable("assinaturas_clinica", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  planoId: int("planoId").notNull().references(() => planosAssinatura.id),
+  estado: mysqlEnum("estado", ["trial", "ativo", "em_atraso", "cancelado", "expirado"]).notNull().default("trial"),
+  cicloFaturacao: mysqlEnum("cicloFaturacao", ["mensal", "anual"]).notNull().default("mensal"),
+  inicioPeriodoAtual: timestamp("inicioPeriodoAtual").notNull(),
+  fimPeriodoAtual: timestamp("fimPeriodoAtual").notNull(),
+  inicioTrial: timestamp("inicioTrial"),
+  fimTrial: timestamp("fimTrial"),
+  cancelarNoFimPeriodo: boolean("cancelarNoFimPeriodo").notNull().default(false),
+  canceladoEm: timestamp("canceladoEm"),
+  motivoCancelamento: text("motivoCancelamento"),
+  stripeCustomerId: varchar("stripeCustomerId", { length: 255 }),
+  stripeSubscriptionId: varchar("stripeSubscriptionId", { length: 255 }),
+  stripePaymentMethodId: varchar("stripePaymentMethodId", { length: 255 }),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const pagamentos = mysqlTable("pagamentos", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  assinaturaId: int("assinaturaId").references(() => assinaturasClinica.id),
+  valor: decimal("valor", { precision: 10, scale: 2 }).notNull(),
+  moeda: varchar("moeda", { length: 3 }).notNull().default("EUR"),
+  estado: mysqlEnum("estado", ["pendente", "sucesso", "falhado", "reembolsado"]).notNull(),
+  descricao: text("descricao"),
+  stripePaymentIntentId: varchar("stripePaymentIntentId", { length: 255 }),
+  stripeInvoiceId: varchar("stripeInvoiceId", { length: 255 }),
+  metadata: json("metadata"),
+  pagoEm: timestamp("pagoEm"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const metricasUso = mysqlTable("metricas_uso", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  inicioPeriodo: timestamp("inicioPeriodo").notNull(),
+  fimPeriodo: timestamp("fimPeriodo").notNull(),
+  totalUtentes: int("totalUtentes").notNull().default(0),
+  totalConsultas: int("totalConsultas").notNull().default(0),
+  totalFaturas: int("totalFaturas").notNull().default(0),
+  receitaTotal: decimal("receitaTotal", { precision: 12, scale: 2 }).notNull().default("0"),
+  dentistasAtivos: int("dentistasAtivos").notNull().default(0),
+  clinicasAtivas: int("clinicasAtivas").notNull().default(0),
+  armazenamentoUsadoMB: int("armazenamentoUsadoMB").notNull().default(0),
+  chamadasAPI: int("chamadasAPI").notNull().default(0),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
+// UTILIZADORES E PERMISSÕES
+// ============================================
+
+export const utilizadoresClinica = mysqlTable("utilizadores_clinica", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  userId: int("userId").notNull().references(() => users.id),
+  role: mysqlEnum("role", ["proprietario", "admin", "dentista", "rececionista"]).notNull(),
+  ativo: boolean("ativo").notNull().default(true),
+  convidadoPor: int("convidadoPor").references(() => users.id),
+  convidadoEm: timestamp("convidadoEm").defaultNow().notNull(),
+  aceiteEm: timestamp("aceiteEm"),
+});
+
+export const dentistas = mysqlTable("dentistas", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  userId: int("userId").references(() => users.id),
+  nome: varchar("nome", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  telemovel: varchar("telemovel", { length: 50 }),
+  especializacao: varchar("especializacao", { length: 255 }),
+  numeroCedula: varchar("numeroCedula", { length: 100 }),
+  percentagemComissao: decimal("percentagemComissao", { precision: 5, scale: 2 }).default("0"),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+// ============================================
+// UTENTES (PACIENTES)
+// ============================================
+
+export const utentes = mysqlTable("utentes", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  numeroUtente: varchar("numeroUtente", { length: 50 }).notNull(),
+  nome: varchar("nome", { length: 255 }).notNull(),
+  email: varchar("email", { length: 320 }),
+  telemovel: varchar("telemovel", { length: 50 }).notNull(),
+  dataNascimento: date("dataNascimento"),
+  genero: mysqlEnum("genero", ["masculino", "feminino", "outro"]),
+  morada: text("morada"),
+  cidade: varchar("cidade", { length: 100 }),
+  codigoPostal: varchar("codigoPostal", { length: 20 }),
+  pais: varchar("pais", { length: 2 }).default("PT"),
+  nif: varchar("nif", { length: 50 }),
+  fotoUrl: varchar("fotoUrl", { length: 500 }),
+  observacoes: text("observacoes"),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const historicoMedico = mysqlTable("historico_medico", {
+  id: int("id").autoincrement().primaryKey(),
+  utenteId: int("utenteId").notNull().references(() => utentes.id),
+  alergias: text("alergias"),
+  medicamentos: text("medicamentos"),
+  condicoesMedicas: text("condicoesMedicas"),
+  cirurgiasPrevias: text("cirurgiasPrevias"),
+  historicoFamiliar: text("historicoFamiliar"),
+  estadoTabagismo: mysqlEnum("estadoTabagismo", ["nunca", "ex_fumador", "fumador"]),
+  consumoAlcool: mysqlEnum("consumoAlcool", ["nunca", "ocasional", "regular"]),
+  tipoSanguineo: varchar("tipoSanguineo", { length: 10 }),
+  contatoEmergenciaNome: varchar("contatoEmergenciaNome", { length: 255 }),
+  contatoEmergenciaTelemovel: varchar("contatoEmergenciaTelemovel", { length: 50 }),
+  observacoes: text("observacoes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+// ============================================
+// PROCEDIMENTOS E TRATAMENTOS
+// ============================================
+
+export const categoriasProcedimento = mysqlTable("categorias_procedimento", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  nome: varchar("nome", { length: 255 }).notNull(),
+  descricao: text("descricao"),
+  cor: varchar("cor", { length: 7 }),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const procedimentos = mysqlTable("procedimentos", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  categoriaId: int("categoriaId").references(() => categoriasProcedimento.id),
+  codigo: varchar("codigo", { length: 50 }),
+  nome: varchar("nome", { length: 255 }).notNull(),
+  descricao: text("descricao"),
+  precoBase: decimal("precoBase", { precision: 10, scale: 2 }).notNull().default("0"),
+  duracaoMinutos: int("duracaoMinutos").default(30),
+  cor: varchar("cor", { length: 7 }),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+// ============================================
+// AGENDA E CONSULTAS
+// ============================================
+
+export const consultas = mysqlTable("consultas", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  utenteId: int("utenteId").notNull().references(() => utentes.id),
+  dentistaId: int("dentistaId").notNull().references(() => dentistas.id),
+  procedimentoId: int("procedimentoId").references(() => procedimentos.id),
+  horaInicio: timestamp("horaInicio").notNull(),
+  horaFim: timestamp("horaFim").notNull(),
+  estado: mysqlEnum("estado", ["agendada", "confirmada", "em_curso", "concluida", "cancelada", "faltou"]).notNull().default("agendada"),
+  titulo: varchar("titulo", { length: 255 }),
+  observacoes: text("observacoes"),
+  motivoCancelamento: text("motivoCancelamento"),
+  confirmadaEm: timestamp("confirmadaEm"),
+  concluidaEm: timestamp("concluidaEm"),
+  canceladaEm: timestamp("canceladaEm"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+// ============================================
+// FATURAÇÃO
+// ============================================
+
+export const faturas = mysqlTable("faturas", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  utenteId: int("utenteId").notNull().references(() => utentes.id),
+  consultaId: int("consultaId").references(() => consultas.id),
+  numeroFatura: varchar("numeroFatura", { length: 50 }).notNull(),
+  dataFatura: timestamp("dataFatura").notNull(),
+  dataVencimento: timestamp("dataVencimento"),
+  subtotal: decimal("subtotal", { precision: 10, scale: 2 }).notNull().default("0"),
+  valorIVA: decimal("valorIVA", { precision: 10, scale: 2 }).notNull().default("0"),
+  percentagemIVA: decimal("percentagemIVA", { precision: 5, scale: 2 }).notNull().default("0"),
+  valorDesconto: decimal("valorDesconto", { precision: 10, scale: 2 }).notNull().default("0"),
+  valorTotal: decimal("valorTotal", { precision: 10, scale: 2 }).notNull().default("0"),
+  valorPago: decimal("valorPago", { precision: 10, scale: 2 }).notNull().default("0"),
+  estado: mysqlEnum("estado", ["rascunho", "enviada", "paga", "parcialmente_paga", "vencida", "cancelada"]).notNull().default("rascunho"),
+  observacoes: text("observacoes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const itensFatura = mysqlTable("itens_fatura", {
+  id: int("id").autoincrement().primaryKey(),
+  faturaId: int("faturaId").notNull().references(() => faturas.id),
+  procedimentoId: int("procedimentoId").references(() => procedimentos.id),
+  descricao: varchar("descricao", { length: 500 }).notNull(),
+  quantidade: int("quantidade").notNull().default(1),
+  precoUnitario: decimal("precoUnitario", { precision: 10, scale: 2 }).notNull(),
+  precoTotal: decimal("precoTotal", { precision: 10, scale: 2 }).notNull(),
+  comissaoDentista: decimal("comissaoDentista", { precision: 10, scale: 2 }).default("0"),
+  valorClinica: decimal("valorClinica", { precision: 10, scale: 2 }).default("0"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export const pagamentosFatura = mysqlTable("pagamentos_fatura", {
+  id: int("id").autoincrement().primaryKey(),
+  faturaId: int("faturaId").notNull().references(() => faturas.id),
+  valor: decimal("valor", { precision: 10, scale: 2 }).notNull(),
+  metodoPagamento: mysqlEnum("metodoPagamento", ["dinheiro", "cartao", "transferencia", "mbway", "multibanco", "outro"]).notNull(),
+  dataPagamento: timestamp("dataPagamento").notNull(),
+  referencia: varchar("referencia", { length: 255 }),
+  observacoes: text("observacoes"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
+// CONFIGURAÇÕES FINANCEIRAS
+// ============================================
+
+export const configuracoesFinanceiras = mysqlTable("configuracoes_financeiras", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  procedimentoId: int("procedimentoId").references(() => procedimentos.id),
+  dentistaId: int("dentistaId").references(() => dentistas.id),
+  tipoDistribuicao: mysqlEnum("tipoDistribuicao", ["percentagem", "fixo", "hibrido"]).notNull().default("percentagem"),
+  percentagemDentista: decimal("percentagemDentista", { precision: 5, scale: 2 }),
+  valorFixoDentista: decimal("valorFixoDentista", { precision: 10, scale: 2 }),
+  percentagemClinica: decimal("percentagemClinica", { precision: 5, scale: 2 }),
+  valorFixoClinica: decimal("valorFixoClinica", { precision: 10, scale: 2 }),
+  custoLaboratorio: decimal("custoLaboratorio", { precision: 10, scale: 2 }).default("0"),
+  custoMateriais: decimal("custoMateriais", { precision: 10, scale: 2 }).default("0"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+// ============================================
+// MENSAGENS E NOTIFICAÇÕES
+// ============================================
+
+export const templatesMensagem = mysqlTable("templates_mensagem", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  nome: varchar("nome", { length: 255 }).notNull(),
+  categoria: mysqlEnum("categoria", ["lembrete_consulta", "confirmacao_consulta", "seguimento", "pos_tratamento", "marketing", "outro"]).notNull(),
+  assunto: varchar("assunto", { length: 500 }),
+  corpo: text("corpo").notNull(),
+  canal: mysqlEnum("canal", ["email", "sms", "whatsapp"]).notNull().default("email"),
+  ativo: boolean("ativo").notNull().default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const mensagensUtente = mysqlTable("mensagens_utente", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  utenteId: int("utenteId").notNull().references(() => utentes.id),
+  templateId: int("templateId").references(() => templatesMensagem.id),
+  canal: mysqlEnum("canal", ["email", "sms", "whatsapp"]).notNull(),
+  assunto: varchar("assunto", { length: 500 }),
+  corpo: text("corpo").notNull(),
+  estado: mysqlEnum("estado", ["pendente", "enviada", "entregue", "lida", "falhada"]).notNull().default("pendente"),
+  enviadaEm: timestamp("enviadaEm"),
+  entregueEm: timestamp("entregueEm"),
+  lidaEm: timestamp("lidaEm"),
+  mensagemErro: text("mensagemErro"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
+// RELAÇÕES
+// ============================================
+
+export const clinicasRelations = relations(clinicas, ({ one, many }) => ({
+  proprietario: one(users, {
+    fields: [clinicas.proprietarioId],
+    references: [users.id],
+  }),
+  assinatura: one(assinaturasClinica),
+  utentes: many(utentes),
+  dentistas: many(dentistas),
+  consultas: many(consultas),
+  faturas: many(faturas),
+}));
+
+export const utentesRelations = relations(utentes, ({ one, many }) => ({
+  clinica: one(clinicas, {
+    fields: [utentes.clinicaId],
+    references: [clinicas.id],
+  }),
+  historicoMedico: one(historicoMedico),
+  consultas: many(consultas),
+  faturas: many(faturas),
+}));
+
+export const consultasRelations = relations(consultas, ({ one }) => ({
+  clinica: one(clinicas, {
+    fields: [consultas.clinicaId],
+    references: [clinicas.id],
+  }),
+  utente: one(utentes, {
+    fields: [consultas.utenteId],
+    references: [utentes.id],
+  }),
+  dentista: one(dentistas, {
+    fields: [consultas.dentistaId],
+    references: [dentistas.id],
+  }),
+  procedimento: one(procedimentos, {
+    fields: [consultas.procedimentoId],
+    references: [procedimentos.id],
+  }),
+}));
+
+export const faturasRelations = relations(faturas, ({ one, many }) => ({
+  clinica: one(clinicas, {
+    fields: [faturas.clinicaId],
+    references: [clinicas.id],
+  }),
+  utente: one(utentes, {
+    fields: [faturas.utenteId],
+    references: [utentes.id],
+  }),
+  consulta: one(consultas, {
+    fields: [faturas.consultaId],
+    references: [consultas.id],
+  }),
+  itens: many(itensFatura),
+  pagamentos: many(pagamentosFatura),
+}));

@@ -1,0 +1,259 @@
+import { mysqlTable, int, varchar, text, timestamp, boolean, json, mysqlEnum } from "drizzle-orm/mysql-core";
+import { clinicas, utentes } from "./schema";
+
+/**
+ * Schema para Sistema de IA
+ * Configurações, análises e insights
+ */
+
+// ============================================
+// CONFIGURAÇÕES DE IA
+// ============================================
+
+export const configuracoesIA = mysqlTable("configuracoes_ia", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  
+  // Provedor de IA
+  provedor: mysqlEnum("provedor", [
+    "openai",
+    "google_gemini",
+    "anthropic_claude",
+    "azure_openai",
+    "custom"
+  ]).notNull().default("openai"),
+  
+  // Chaves API (criptografadas)
+  apiKey: text("apiKey").notNull(),
+  apiKeySecundaria: text("apiKeySecundaria"), // Backup/fallback
+  
+  // Modelos
+  modeloTexto: varchar("modeloTexto", { length: 100 }).default("gpt-4"),
+  modeloVisao: varchar("modeloVisao", { length: 100 }).default("gpt-4-vision-preview"),
+  modeloChat: varchar("modeloChat", { length: 100 }).default("gpt-4"),
+  
+  // Configurações
+  temperaturaTexto: int("temperaturaTexto").default(70), // 0-100 (será dividido por 100)
+  temperaturaAnalise: int("temperaturaAnalise").default(30), // Mais conservador para análises
+  maxTokens: int("maxTokens").default(2000),
+  
+  // Funcionalidades ativadas
+  analiseImagens: boolean("analiseImagens").default(true),
+  chatAssistente: boolean("chatAssistente").default(true),
+  insightsAutomaticos: boolean("insightsAutomaticos").default(true),
+  analisePreditiva: boolean("analisePreditiva").default(true),
+  autoPreenchimento: boolean("autoPreenchimento").default(false),
+  
+  // Limites e controle
+  limiteDiario: int("limiteDiario").default(100), // Requisições por dia
+  usoDiario: int("usoDiario").default(0),
+  dataResetUso: timestamp("dataResetUso").defaultNow(),
+  
+  // Idioma
+  idiomaIA: varchar("idiomaIA", { length: 10 }).default("pt"),
+  
+  // Prompts personalizados
+  promptsPersonalizados: json("promptsPersonalizados").$type<{
+    analiseImagem?: string;
+    diagnostico?: string;
+    planoTratamento?: string;
+    prescricao?: string;
+  }>(),
+  
+  ativo: boolean("ativo").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+// ============================================
+// ANÁLISES DE IA
+// ============================================
+
+export const analisesIA = mysqlTable("analises_ia", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  utenteId: int("utenteId").references(() => utentes.id),
+  
+  tipo: mysqlEnum("tipo", [
+    "analise_imagem",
+    "diagnostico",
+    "plano_tratamento",
+    "risco_carie",
+    "risco_periodontal",
+    "prescricao",
+    "odontograma",
+    "chat",
+    "outro"
+  ]).notNull(),
+  
+  // Input
+  prompt: text("prompt").notNull(),
+  imagemUrl: varchar("imagemUrl", { length: 500 }),
+  contexto: json("contexto").$type<{
+    historicoMedico?: any;
+    consultasAnteriores?: any;
+    odontograma?: any;
+    outros?: any;
+  }>(),
+  
+  // Output
+  resposta: text("resposta").notNull(),
+  confianca: int("confianca"), // 0-100
+  
+  // Dados estruturados
+  dadosEstruturados: json("dadosEstruturados").$type<{
+    deteccoes?: Array<{
+      tipo: string;
+      localizacao?: any;
+      confianca: number;
+      descricao: string;
+    }>;
+    recomendacoes?: Array<{
+      titulo: string;
+      descricao: string;
+      prioridade: string;
+    }>;
+    metricas?: any;
+  }>(),
+  
+  // Metadados
+  modelo: varchar("modelo", { length: 100 }),
+  tokens: int("tokens"),
+  custoEstimado: int("custoEstimado"), // em centavos
+  tempoProcessamento: int("tempoProcessamento"), // em ms
+  
+  // Status
+  aprovado: boolean("aprovado").default(false),
+  revisadoPor: int("revisadoPor"),
+  dataRevisao: timestamp("dataRevisao"),
+  observacoesRevisao: text("observacoesRevisao"),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
+// CHAT ASSISTENTE
+// ============================================
+
+export const conversasIA = mysqlTable("conversas_ia", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  usuarioId: int("usuarioId").notNull(),
+  
+  titulo: varchar("titulo", { length: 255 }),
+  contexto: mysqlEnum("contexto", [
+    "geral",
+    "diagnostico",
+    "tratamento",
+    "medicacao",
+    "procedimento",
+    "duvida_clinica"
+  ]).default("geral"),
+  
+  // Contexto da conversa
+  utenteRelacionado: int("utenteRelacionado").references(() => utentes.id),
+  dadosContexto: json("dadosContexto").$type<any>(),
+  
+  ativa: boolean("ativa").default(true),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().notNull(),
+});
+
+export const mensagensIA = mysqlTable("mensagens_ia", {
+  id: int("id").autoincrement().primaryKey(),
+  conversaId: int("conversaId").notNull().references(() => conversasIA.id),
+  
+  papel: mysqlEnum("papel", ["user", "assistant", "system"]).notNull(),
+  conteudo: text("conteudo").notNull(),
+  
+  // Anexos
+  anexos: json("anexos").$type<Array<{
+    tipo: string;
+    url: string;
+    nome?: string;
+  }>>(),
+  
+  // Metadados
+  tokens: int("tokens"),
+  modelo: varchar("modelo", { length: 100 }),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
+// SUGESTÕES AUTOMÁTICAS
+// ============================================
+
+export const sugestoesIA = mysqlTable("sugestoes_ia", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  utenteId: int("utenteId").references(() => utentes.id),
+  
+  tipo: mysqlEnum("tipo", [
+    "proxima_consulta",
+    "tratamento_preventivo",
+    "alerta_medicacao",
+    "risco_saude",
+    "otimizacao_agenda",
+    "melhoria_processo",
+    "oportunidade_receita"
+  ]).notNull(),
+  
+  titulo: varchar("titulo", { length: 255 }).notNull(),
+  descricao: text("descricao").notNull(),
+  
+  prioridade: mysqlEnum("prioridade", ["baixa", "media", "alta", "urgente"]).default("media"),
+  confianca: int("confianca"), // 0-100
+  
+  // Ação sugerida
+  acaoSugerida: json("acaoSugerida").$type<{
+    tipo: string;
+    parametros?: any;
+    linkRapido?: string;
+  }>(),
+  
+  // Impacto estimado
+  impactoEstimado: json("impactoEstimado").$type<{
+    financeiro?: number;
+    tempo?: number;
+    satisfacao?: number;
+    saude?: number;
+  }>(),
+  
+  // Status
+  visualizada: boolean("visualizada").default(false),
+  dataVisualizacao: timestamp("dataVisualizacao"),
+  aceita: boolean("aceita"),
+  dataAcao: timestamp("dataAcao"),
+  feedback: text("feedback"),
+  
+  expiradaEm: timestamp("expiradaEm"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+// ============================================
+// LOGS DE USO
+// ============================================
+
+export const logsUsoIA = mysqlTable("logs_uso_ia", {
+  id: int("id").autoincrement().primaryKey(),
+  clinicaId: int("clinicaId").notNull().references(() => clinicas.id),
+  
+  funcionalidade: varchar("funcionalidade", { length: 100 }).notNull(),
+  modelo: varchar("modelo", { length: 100 }),
+  tokens: int("tokens"),
+  custoEstimado: int("custoEstimado"), // em centavos
+  tempoProcessamento: int("tempoProcessamento"), // em ms
+  
+  sucesso: boolean("sucesso").default(true),
+  erro: text("erro"),
+  
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+});
+
+export type ConfiguracaoIA = typeof configuracoesIA.$inferSelect;
+export type AnaliseIA = typeof analisesIA.$inferSelect;
+export type ConversaIA = typeof conversasIA.$inferSelect;
+export type MensagemIA = typeof mensagensIA.$inferSelect;
+export type SugestaoIA = typeof sugestoesIA.$inferSelect;
+export type LogUsoIA = typeof logsUsoIA.$inferSelect;
